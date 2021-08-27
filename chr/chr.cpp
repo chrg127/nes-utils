@@ -93,7 +93,7 @@ namespace {
     // loop over a row of a single tile
     auto convert_colors(std::span<u8> tilerow, int channels)
     {
-        u8 low, hi;
+        u8 low = 0, hi = 0;
         assert(tilerow.size() == std::size_t(8 * channels));
         for (int i = 0, j = 0; j < 8; i += channels, j++) {
             auto [lowbit, hibit] = convert_one_color(tilerow.subspan(i, channels));

@@ -33,12 +33,12 @@ void process(FILE *f, int num_image)
         y++;
     };
 
-    auto text_backend = [](std::span<uint8_t> row)
-    {
-        for (int x = 0; x < 128; x++)
-            fmt::print("{}", row[x]);
-        fmt::print("\n");
-    };
+    // auto text_backend = [](std::span<uint8_t> row)
+    // {
+    //     for (int x = 0; x < 128; x++)
+    //         fmt::print("{}", row[x]);
+    //     fmt::print("\n");
+    // };
 
     img.fill(0);
     chr::convert(f, img_backend);
