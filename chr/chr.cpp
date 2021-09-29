@@ -96,7 +96,7 @@ namespace {
         u8 low = 0, hi = 0;
         assert(tilerow.size() == std::size_t(8 * channels));
         for (int i = 0, j = 0; j < 8; i += channels, j++) {
-            auto [lowbit, hibit] = convert_one_color(tilerow.subspan(i, channels));
+            auto [lowbit, hibit] = convert_one_color(ColorRGBA{tilerow.subspan(i, channels)});
             low = setbit(low, 7-j, lowbit);
             hi  = setbit(hi,  7-j, hibit );
         }
@@ -144,13 +144,13 @@ void convert(FILE *fp, Callback callback)
     convert(std::span{ptr.get(), std::size_t(size)}, callback);
 }
 
+const int TILES_PER_ROW = 16;
+const int COLORS_PER_TILE = 8;
+
 std::vector<uint8_t> extract(std::span<uint8_t> bytes, int channels)
 {
-    assert(channels == 3 || channels == 4);
-    // a color is channels bytes
-    // a tile is 8x8 colors
-    // a row is composed of 16 tiles, of 8 colors each
-    const std::size_t count = 8 * 16 * 8 * channels;
+    // assert(channels == 3 || channels == 4);
+    const std::size_t count = 8 * TILES_PER_ROW * COLORS_PER_TILE * channels;
     std::vector<u8> res;
     auto add = [&](auto &bytes) { for (auto b : bytes) res.push_back(b); };
 

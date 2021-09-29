@@ -12,7 +12,7 @@ namespace chr {
 struct ColorRGBA {
     std::array<uint8_t, 4> data;
 
-    ColorRGBA(uint32_t value)
+    explicit ColorRGBA(uint32_t value)
     {
         data[0] = value >> 24 & 0xFF;
         data[1] = value >> 16 & 0xFF;
@@ -20,12 +20,17 @@ struct ColorRGBA {
         data[3] = value       & 0xFF;
     }
 
-    ColorRGBA(std::span<uint8_t> color)
+    explicit ColorRGBA(std::span<uint8_t> color)
     {
-        data[0] = color[0];
-        data[1] = color[1];
-        data[2] = color[2];
-        data[3] = color.size() >= 4 ? color[3] : 0xFF;
+        if (color.size() == 1) {
+            data[0] = data[1] = data[2] = color[0];
+            data[3] = 0xFF;
+        } else {
+            data[0] = color[0];
+            data[1] = color[1];
+            data[2] = color[2];
+            data[3] = color.size() >= 4 ? color[3] : 0xFF;
+        }
     }
 
     ColorRGBA(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
