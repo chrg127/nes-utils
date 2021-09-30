@@ -6,9 +6,8 @@
 #include <string>
 #include <fmt/core.h>
 #include <CImg.h>
+#include "stb_image.h"
 #include "chr.hpp"
-
-using namespace std::literals;
 
 long filesize(FILE *f)
 {
@@ -18,9 +17,41 @@ long filesize(FILE *f)
     return res;
 }
 
-void process(FILE *f, const char *output_name)
+int image_to_chr(const char *input, const char *output)
 {
-    cimg_library::CImg<unsigned char> img(16 * 8, chr::img_height(filesize(f)), 1, 4);
+    int width, height, channels;
+    unsigned char *data = stbi_load(input, &width, &height, &channels, 0);
+    if (!data) {
+        fmt::print(stderr, "error: couldn't load image {}\n", input);
+        return 1;
+    }
+
+    std::span<uint8_t> dataspan{data, std::size_t(width*height*channels)};
+    auto res = chr::to_chr(dataspan, width, height, channels);
+
+    FILE *out = fopen(output, "w");
+    if (!out) {
+        fmt::print(stderr, "error: couldn't write to {}\n", output);
+        std::perror("");
+        return 1;
+    }
+
+    std::fwrite(res.data(), 1, res.size(), out);
+    fclose(out);
+    return 0;
+}
+
+int chr_to_image(const char *input, const char *output)
+{
+    FILE *f = fopen(input, "r");
+    if (!f) {
+        fmt::print(stderr, "error: couldn't open file {}: ", input);
+        std::perror("");
+        return 1;
+    }
+
+    size_t height = chr::img_height(filesize(f));
+    cimg_library::CImg<unsigned char> img(16 * 8, height, 1, 4);
     int y = 0;
 
     auto img_backend = [&](std::span<uint8_t> row)
@@ -35,16 +66,12 @@ void process(FILE *f, const char *output_name)
         y++;
     };
 
-    // auto text_backend = [](std::span<uint8_t> row)
-    // {
-    //     for (int x = 0; x < 128; x++)
-    //         fmt::print("{}", row[x]);
-    //     fmt::print("\n");
-    // };
-
     img.fill(0);
-    chr::convert(f, img_backend);
-    img.save_png(output_name);
+    chr::to_rgba(f, img_backend);
+    fclose(f);
+    img.save_png(output);
+
+    return 0;
 }
 
 void usage()
@@ -52,7 +79,8 @@ void usage()
     fmt::print(stderr, "usage: chrconvert [file...]\n"
                        "valid flags:\n"
                        "    -h: show this help text\n"
-                       "    -o FILENAME: output to FILENAME\n");
+                       "    -o FILENAME: output to FILENAME\n"
+                       "    -r: reverse: convert from image to chr\n");
 }
 
 int main(int argc, char *argv[])
@@ -62,7 +90,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    char *input = NULL, *output = NULL;
+    bool mode = false; // chr to image
+    const char *input = NULL, *output = NULL;
     while (++argv, --argc > 0) {
         if (argv[0][0] == '-') {
             switch (argv[0][1]) {
@@ -76,6 +105,9 @@ int main(int argc, char *argv[])
                     fmt::print(stderr, "warning: no argument provided for -o\n");
                 else
                     output = argv[0];
+                break;
+            case 'r':
+                mode = true; // image to chr
                 break;
             default:
                 fmt::print(stderr, "warning: -{}: unknown flag\n", argv[0][1]);
@@ -93,14 +125,9 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    FILE *f = std::fopen(input, "r");
-    if (!f) {
-        fmt::print(stderr, "error: couldn't open file {}: ", input);
-        std::perror("");
-        return 1;
-    }
-
-    process(f, output ? output : "output.png");
-    fclose(f);
+    output = output ? output : "output.png";
+    if (!mode)
+        return chr_to_image(input, output);
+    else
+        return image_to_chr(input, output);
 }
-

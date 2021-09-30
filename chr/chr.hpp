@@ -46,6 +46,7 @@ struct ColorRGBA {
     uint8_t blue() const  { return data[2]; }
     uint8_t alpha() const { return data[3]; }
 
+    uint8_t operator[](std::size_t i) { return data[i]; }
 };
 
 inline bool operator==(const ColorRGBA &c1, const ColorRGBA &c2)
@@ -58,9 +59,11 @@ inline bool operator==(const ColorRGBA &c1, const ColorRGBA &c2)
 
 using Callback = std::function<void(std::span<uint8_t, 128>)>;
 
-void convert(std::span<uint8_t> bytes, Callback draw_row);
-void convert(FILE *fp, Callback draw_row);
-std::vector<uint8_t> extract(std::span<uint8_t> bytes, int channels);
+/* convert: chr to rgba
+ * extract: rgba to chr */
+void to_rgba(std::span<uint8_t> bytes, Callback draw_row);
+void to_rgba(FILE *fp, Callback draw_row);
+std::vector<uint8_t> to_chr(std::span<uint8_t> bytes, std::size_t width, std::size_t height, int channels);
 long img_height(std::size_t num_bytes);
 void use_palette(const std::array<ColorRGBA, 4> &palette);
 ColorRGBA get_color(uint8_t color);

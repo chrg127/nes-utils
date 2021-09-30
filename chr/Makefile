@@ -1,6 +1,4 @@
-_objs := chr.o
-_objs_convert := chrconvert.o
-_objs_extract := chrextract.o stb_image.o
+_objs := chr.o chrconvert.o stb_image.o
 outdir := debug
 build := debug
 CC := gcc
@@ -11,9 +9,7 @@ CXXFLAGS := -I. -std=c++20 \
 		 	-Wformat=2 -Wmissing-include-dirs -Wno-unused-parameter \
 		 	-fconcepts
 flags_deps = -MMD -MP -MF $(@:.o=.d)
-#libs :=
-libs_extract := -lfmt
-libs_convert := -L/usr/X11R6/lib -lm -lpthread -lX11 -lfmt
+libs := -lfmt -L/usr/X11R6/lib -lm -lpthread -lX11 -lfmt
 
 ifeq ($(build),debug)
     outdir := debug
@@ -26,18 +22,12 @@ else
 endif
 
 objs := $(patsubst %,$(outdir)/%,$(_objs))
-objs_convert := $(patsubst %,$(outdir)/%,$(_objs_convert))
-objs_extract := $(patsubst %,$(outdir)/%,$(_objs_extract))
 
-all: $(outdir)/chrconvert $(outdir)/chrextract
+all: $(outdir)/chrconvert
 
 $(outdir)/chrconvert: $(outdir) $(objs) $(objs_convert)
 	$(info Linking $@ ...)
-	$(CXX) $(objs) $(objs_convert) -o $@ $(libs) $(libs_convert)
-
-$(outdir)/chrextract: $(outdir) $(objs) $(objs_extract)
-	$(info Linking $@ ...)
-	$(CXX) $(objs) $(objs_extract) -o $@ $(libs) $(libs_extract)
+	$(CXX) $(objs) -o $@ $(libs)
 
 $(outdir)/stb_image.o: stb_image.c
 	$(info Compiling $< ...)

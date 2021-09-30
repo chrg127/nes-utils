@@ -18,6 +18,10 @@ static const ColorRGBA default_pal[] = {
 };
 static const ColorRGBA *palette = default_pal;
 
+const int TILES_PER_ROW = 16;
+const int TILE_WIDTH = 8;
+const int TILE_HEIGHT = 8;
+
 namespace {
     long filesize(FILE *f)
     {
@@ -64,13 +68,13 @@ namespace {
         return hibit << 1 | lowbit;
     }
 
-    std::array<u8, 128> get_pixel_row(std::span<u8[16], 16> tiles, int row)
+    std::array<u8, 128> get_pixel_row(std::span<u8[16], 16> tiles, int row, int num_tiles)
     {
         std::array<u8, 128> res;
         for (int i = 0; i < 16; i++) {
             for (int j = 0; j < 8; j++) {
-                u8 pd = get_pixel_data(tiles[i], row, j);
-                res[i*8 + j] = pd;
+                res[i*8 + j] = i < num_tiles ? get_pixel_data(tiles[i], row, j)
+                                              : 0;
             }
         }
         return res;
@@ -80,17 +84,14 @@ namespace {
     {
         auto it = std::find(palette, palette + 4, color);
         if (it == palette + 4) {
-            std::fprintf(stderr,
-                "warning: color not present in palette: %02X %02X %02X %02X\n",
-                color.red(), color.green(), color.blue(), color.alpha()
-            );
+            std::fprintf(stderr, "warning: color not present in palette: %02X %02X %02X %02X\n", color[0], color[1], color[2], color[3]);
             return {0, 0};
         }
         int i = it - palette;
         return { getbit(i, 1), getbit(i, 0) };
     }
 
-    // loop over a row of a single tile
+    // loop over a row of a single tile, return low byte and high byte
     auto convert_colors(std::span<u8> tilerow, int channels)
     {
         u8 low = 0, hi = 0;
@@ -103,65 +104,58 @@ namespace {
         return std::pair{low, hi};
     }
 
-    // loop over the rows of a single tile
-    std::array<u8, 16> extract_one(std::span<u8> tile_rows, int channels, int i)
+    // loop over the rows of a single tile. si = start index
+    std::array<u8, 16> extract_one(std::span<u8> tile_rows, int channels, std::size_t si, std::size_t width)
     {
         std::array<u8, 16> res;
         const int tile_row_size = 8 * channels;
-        const int row_size = tile_row_size * 16;
 
-        for (int j = 0; j < 8; j++) {
-            int start = row_size*j + tile_row_size*i;
-            auto [low, hi] = convert_colors(tile_rows.subspan(start, tile_row_size), channels);
-            res[j  ] = hi;
-            res[j+8] = low;
+        for (int y = 0; y < 8; y++) {
+            std::size_t ri = si + y*width*channels;
+            auto [low, hi] = convert_colors(tile_rows.subspan(ri, tile_row_size), channels);
+            res[y  ] = hi;
+            res[y+8] = low;
         }
         return res;
     }
 }
 
-void convert(std::span<uint8_t> bytes, Callback draw_row)
+void to_rgba(std::span<uint8_t> bytes, Callback draw_row)
 {
     u8 tiles[16][16];
 
     for (std::size_t index = 0; index < bytes.size(); ) {
-        for (int i = 0; i < 16; i++) {
-            std::memcpy(tiles[i], &bytes[index], 16);
-            index += 16;
-        }
-        for (int i = 0; i < 8; i++) {
-            auto row = get_pixel_row(tiles, i);
+        int num_tiles = 0;
+        for (num_tiles = 0; num_tiles < 16 && index < bytes.size(); num_tiles++, index += 16)
+            std::memcpy(tiles[num_tiles], &bytes[index], 16);
+        for (int r = 0; r < 8; r++) {
+            auto row = get_pixel_row(tiles, r, num_tiles);
             draw_row(row);
         }
     }
 }
 
-void convert(FILE *fp, Callback callback)
+void to_rgba(FILE *fp, Callback callback)
 {
     long size = filesize(fp);
     auto ptr = std::make_unique<u8[]>(size);
     std::fread(ptr.get(), 1, size, fp);
-    convert(std::span{ptr.get(), std::size_t(size)}, callback);
+    to_rgba(std::span{ptr.get(), std::size_t(size)}, callback);
 }
 
-const int TILES_PER_ROW = 16;
-const int COLORS_PER_TILE = 8;
-
-std::vector<uint8_t> extract(std::span<uint8_t> bytes, int channels)
+std::vector<u8> to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, int channels)
 {
-    // assert(channels == 3 || channels == 4);
-    const std::size_t count = 8 * TILES_PER_ROW * COLORS_PER_TILE * channels;
     std::vector<u8> res;
     auto add = [&](auto &bytes) { for (auto b : bytes) res.push_back(b); };
 
-    for (std::size_t i = 0; i < bytes.size(); i += count ) {
-        std::span<u8> tile_rows = bytes.subspan(i, count);
-        if (tile_rows.size() < count) {
-            std::fprintf(stderr, "warning: bytes not formatted correctly.\n");
-            return res;
-        }
-        for (int i = 0; i < 16; i++) {
-            auto tile_bytes = extract_one(tile_rows, channels, i);
+    if (width % 8 != 0 || height % 8 != 0) {
+        std::fprintf(stderr, "error: width and height must be a power of 8");
+        return res;
+    }
+
+    for (std::size_t j = 0; j < bytes.size(); j += width*channels*8) {
+        for (std::size_t i = 0; i < width*channels; i += 8*channels) {
+            auto tile_bytes = extract_one(bytes, channels, j+i, width);
             add(tile_bytes);
         }
     }
@@ -169,16 +163,11 @@ std::vector<uint8_t> extract(std::span<uint8_t> bytes, int channels)
     return res;
 }
 
-std::vector<uint8_t> extract(FILE *fp, int channels)
-{
-    long size = filesize(fp);
-    auto ptr = std::make_unique<u8[]>(size);
-    std::fread(ptr.get(), 1, size, fp);
-    return extract(std::span{ptr.get(), std::size_t(size)}, channels);
-}
-
 long img_height(std::size_t num_bytes)
 {
+    // we put 16 tiles on every row. this corresponds to exactly 256 bytes for
+    // every row and means we must make sure to have a multiple of 256.
+    num_bytes = num_bytes % 256 == 0 ? num_bytes : (num_bytes/256 + 1) * 256;
     return num_bytes / 16 / 16 * 8;
 }
 
