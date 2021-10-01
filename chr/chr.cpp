@@ -21,6 +21,8 @@ static const ColorRGBA *palette = default_pal;
 const int TILES_PER_ROW = 16;
 const int TILE_WIDTH = 8;
 const int TILE_HEIGHT = 8;
+const int BYTES_PER_TILE = 16;
+const int ROW_SIZE = TILES_PER_ROW * TILE_WIDTH;
 
 namespace {
     long filesize(FILE *f)
@@ -58,7 +60,7 @@ namespace {
         return getbits(num, bitno, 1);
     }
 
-    u8 get_pixel_data(u8 tile[16], int row, int col)
+    u8 get_pixel_data(std::span<u8> tile, int row, int col)
     {
         u8 bit = 7 - col;
         u8 lowbyte = tile[row];
@@ -68,13 +70,18 @@ namespace {
         return hibit << 1 | lowbit;
     }
 
-    std::array<u8, 128> get_pixel_row(std::span<u8[16], 16> tiles, int row, int num_tiles)
+    // when converting tiles, they are converted row-wise, i.e. first we convert
+    // the first row of every single tile, then the second, etc...
+    // get_pixel_data()'s job is to do the conversion for one single tile
+    std::array<u8, ROW_SIZE> get_single_row(std::span<u8> tiles, int row, int num_tiles)
     {
-        std::array<u8, 128> res;
-        for (int i = 0; i < 16; i++) {
+        std::array<u8, ROW_SIZE> res;
+        // i = tile number; j = tile column
+        for (int i = 0; i < TILES_PER_ROW; i++) {
             for (int j = 0; j < 8; j++) {
-                res[i*8 + j] = i < num_tiles ? get_pixel_data(tiles[i], row, j)
-                                              : 0;
+                res[i*8 + j] = i < num_tiles
+                    ? get_pixel_data(tiles.subspan(i*BYTES_PER_TILE, BYTES_PER_TILE), row, j)
+                    : 0;
             }
         }
         return res;
@@ -120,27 +127,29 @@ namespace {
     }
 }
 
-void to_rgba(std::span<uint8_t> bytes, Callback draw_row)
+void to_indexed(std::span<uint8_t> bytes, Callback draw_row)
 {
-    u8 tiles[16][16];
-
-    for (std::size_t index = 0; index < bytes.size(); ) {
-        int num_tiles = 0;
-        for (num_tiles = 0; num_tiles < 16 && index < bytes.size(); num_tiles++, index += 16)
-            std::memcpy(tiles[num_tiles], &bytes[index], 16);
+    // this loop inspect 16 tiles each iteration
+    // the inner loop gets one single row of pixels, with size equal to the
+    // width of the resulting image
+    for (std::size_t index = 0; index < bytes.size(); index += BYTES_PER_TILE * TILES_PER_ROW) {
+        int bytes_remaining = bytes.size() - index;
+        int count = std::min(bytes_remaining, BYTES_PER_TILE * TILES_PER_ROW);
+        int num_tiles = count / BYTES_PER_TILE;
+        std::span<u8> tiles = bytes.subspan(index, count);
         for (int r = 0; r < 8; r++) {
-            auto row = get_pixel_row(tiles, r, num_tiles);
+            auto row = get_single_row(tiles, r, num_tiles);
             draw_row(row);
         }
     }
 }
 
-void to_rgba(FILE *fp, Callback callback)
+void to_indexed(FILE *fp, Callback callback)
 {
     long size = filesize(fp);
     auto ptr = std::make_unique<u8[]>(size);
     std::fread(ptr.get(), 1, size, fp);
-    to_rgba(std::span{ptr.get(), std::size_t(size)}, callback);
+    to_indexed(std::span{ptr.get(), std::size_t(size)}, callback);
 }
 
 std::vector<u8> to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, int channels)

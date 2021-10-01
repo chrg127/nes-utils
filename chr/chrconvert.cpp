@@ -54,7 +54,8 @@ int chr_to_image(const char *input, const char *output)
     cimg_library::CImg<unsigned char> img(16 * 8, height, 1, 4);
     int y = 0;
 
-    auto img_backend = [&](std::span<uint8_t> row)
+    img.fill(0);
+    chr::to_indexed(f, [&](std::span<uint8_t> row)
     {
         for (int x = 0; x < 128; x++) {
             auto color = chr::get_color(row[x]);
@@ -64,12 +65,10 @@ int chr_to_image(const char *input, const char *output)
             img(x, y, 3) = 0xFF;
         }
         y++;
-    };
+    });
 
-    img.fill(0);
-    chr::to_rgba(f, img_backend);
-    fclose(f);
     img.save_png(output);
+    fclose(f);
 
     return 0;
 }
@@ -90,8 +89,9 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    bool mode = false; // chr to image
+    enum class Mode { TOIMG, TOCHR } mode = Mode::TOIMG;
     const char *input = NULL, *output = NULL;
+
     while (++argv, --argc > 0) {
         if (argv[0][0] == '-') {
             switch (argv[0][1]) {
@@ -107,7 +107,7 @@ int main(int argc, char *argv[])
                     output = argv[0];
                 break;
             case 'r':
-                mode = true; // image to chr
+                mode = Mode::TOCHR;
                 break;
             default:
                 fmt::print(stderr, "warning: -{}: unknown flag\n", argv[0][1]);
@@ -125,9 +125,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    output = output ? output : "output.png";
-    if (!mode)
-        return chr_to_image(input, output);
-    else
-        return image_to_chr(input, output);
+    return mode == Mode::TOIMG ? chr_to_image(input, output ? output : "output.png")
+                               : image_to_chr(input, output ? output : "output.chr");
 }
