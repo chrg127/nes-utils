@@ -4,6 +4,9 @@
 #include <array>
 #include <span>
 #include <string>
+#include <optional>
+#include <charconv>
+#include <string_view>
 #include <fmt/core.h>
 #include <CImg.h>
 #include "stb_image.h"
@@ -11,6 +14,8 @@
 
 struct ColorRGBA {
     std::array<uint8_t, 4> data;
+
+    constexpr ColorRGBA() = default;
 
     explicit ColorRGBA(std::span<uint8_t> color)
     {
@@ -25,14 +30,14 @@ struct ColorRGBA {
         }
     }
 
-    ColorRGBA(uint8_t r, uint8_t g, uint8_t b, uint8_t a) : data({r, g, b, a}) { }
+    constexpr ColorRGBA(uint8_t r, uint8_t g, uint8_t b, uint8_t a) : data({r, g, b, a}) { }
 
-    uint8_t red() const   { return data[0]; }
-    uint8_t green() const { return data[1]; }
-    uint8_t blue() const  { return data[2]; }
-    uint8_t alpha() const { return data[3]; }
+    constexpr uint8_t red() const   { return data[0]; }
+    constexpr uint8_t green() const { return data[1]; }
+    constexpr uint8_t blue() const  { return data[2]; }
+    constexpr uint8_t alpha() const { return data[3]; }
 
-    uint8_t operator[](std::size_t i) { return data[i]; }
+    constexpr uint8_t operator[](std::size_t i) { return data[i]; }
 };
 
 inline bool operator==(const ColorRGBA &c1, const ColorRGBA &c2)
@@ -43,6 +48,62 @@ inline bool operator==(const ColorRGBA &c1, const ColorRGBA &c2)
         && c1.data[3] == c2.data[3];
 }
 
+template <unsigned BPP>
+constexpr std::array<ColorRGBA, BPP*BPP> make_default_palette()
+{
+    std::array<ColorRGBA, BPP*BPP> palette;
+    constexpr uint8_t base = 0xFF / (BPP*BPP-1);
+    for (int i = 0; i < BPP*BPP; i++) {
+        uint8_t value = base * i;
+        palette[i] = ColorRGBA{value, value, value, 0xFF};
+    }
+    return palette;
+}
+
+static const auto palette_2bpp = make_default_palette<2>();
+static const auto palette_4bpp = make_default_palette<4>();
+static const auto palette_8bpp = make_default_palette<8>();
+
+ColorRGBA get_color(int color, int bpp)
+{
+    if (bpp == 2) return palette_2bpp[color];
+    if (bpp == 4) return palette_4bpp[color];
+    if (bpp == 8) return palette_8bpp[color];
+    return ColorRGBA{};
+}
+
+template <std::size_t Size>
+int array_find_color(const std::array<ColorRGBA, Size> &palette, ColorRGBA color)
+{
+    auto it = std::find(palette.begin(), palette.end(), color);
+    return it != palette.end() ? it - palette.begin() : -1;
+}
+
+int find_color(ColorRGBA color, int bpp)
+{
+    if (bpp == 2) return array_find_color(palette_2bpp, color);
+    if (bpp == 4) return array_find_color(palette_4bpp, color);
+    if (bpp == 8) return array_find_color(palette_8bpp, color);
+    return -1;
+}
+
+std::vector<uint8_t> convert_to_indexed(std::span<unsigned char> data, int channels, int bpp)
+{
+    std::vector<uint8_t> output;
+    output.reserve(data.size() / channels);
+
+    for (std::size_t i = 0; i < data.size(); i += channels) {
+        ColorRGBA color{data.subspan(i, channels)};
+        int index = find_color(color, bpp);
+        if (index == -1) {
+            fmt::print(stderr, "warning: color not present in palette\n");
+            continue;
+        }
+        output.push_back(index);
+    }
+    return output;
+}
+
 long filesize(FILE *f)
 {
     fseek(f, 0, SEEK_END);
@@ -51,36 +112,19 @@ long filesize(FILE *f)
     return res;
 }
 
-static const ColorRGBA palette[] = {
-    ColorRGBA{ 0, 0, 0, 0xFF },
-    ColorRGBA{ 0x60, 0x60, 0x60, 0xFF },
-    ColorRGBA{ 0xB0, 0xB0, 0xB0, 0xFF },
-    ColorRGBA{ 0xFF, 0xFF, 0xFF, 0xFF },
-};
-
-ColorRGBA get_color(int color)
+template <std::integral T = int>
+std::optional<T> strconv(const char *str)
 {
-    return palette[color];
+    T value = 0;
+    const char *start = str;
+    const char *end = str + strlen(str);
+    auto res = std::from_chars(start, end, value, 10);
+    if (res.ec != std::errc() || res.ptr != end)
+        return std::nullopt;
+    return value;
 }
 
-std::vector<uint8_t> convert_to_indexed(std::span<unsigned char> data, int channels)
-{
-    std::vector<uint8_t> output;
-    output.reserve(data.size() / channels);
-    for (std::size_t i = 0; i < data.size(); i += channels) {
-        ColorRGBA color{data.subspan(i, channels)};
-        auto it = std::find(std::begin(palette), std::end(palette), color);
-        if (it == std::end(palette)) {
-            fmt::print(stderr, "warning: color not present in palette\n");
-            continue;
-        }
-        int index = it - std::begin(palette);
-        output.push_back(index);
-    }
-    return output;
-}
-
-int image_to_chr(const char *input, const char *output)
+int image_to_chr(const char *input, const char *output, int bpp, chr::DataMode mode)
 {
     int width, height, channels;
     unsigned char *data = stbi_load(input, &width, &height, &channels, 0);
@@ -97,8 +141,8 @@ int image_to_chr(const char *input, const char *output)
     }
 
     auto tmp = std::span(data, width*height*channels);
-    auto data_transformed = convert_to_indexed(tmp, channels);
-    chr::to_chr(data_transformed, width, height, [&](std::span<uint8_t> tile) {
+    auto data_transformed = convert_to_indexed(tmp, channels, bpp);
+    chr::to_chr(data_transformed, width, height, bpp, [&](std::span<uint8_t> tile) {
         fwrite(tile.data(), 1, tile.size(), out);
     });
     // std::span<uint8_t> dataspan{data, std::size_t(width*height*channels)};
@@ -108,7 +152,7 @@ int image_to_chr(const char *input, const char *output)
     return 0;
 }
 
-int chr_to_image(const char *input, const char *output)
+int chr_to_image(const char *input, const char *output, int bpp, chr::DataMode mode)
 {
     FILE *f = fopen(input, "r");
     if (!f) {
@@ -122,10 +166,10 @@ int chr_to_image(const char *input, const char *output)
     int y = 0;
 
     img.fill(0);
-    chr::to_indexed(f, [&](std::span<uint8_t> row)
+    chr::to_indexed(f, bpp, mode, [&](std::span<uint8_t> row)
     {
         for (int x = 0; x < 128; x++) {
-            auto color = get_color(row[x]);
+            auto color = get_color(row[x], bpp);
             img(x, y, 0) = color.red();
             img(x, y, 1) = color.green();
             img(x, y, 2) = color.blue();
@@ -158,6 +202,8 @@ int main(int argc, char *argv[])
 
     enum class Mode { TOIMG, TOCHR } mode = Mode::TOIMG;
     const char *input = NULL, *output = NULL;
+    int bpp = 2;
+    chr::DataMode datamode = chr::DataMode::Planar;
 
     while (++argv, --argc > 0) {
         if (argv[0][0] == '-') {
@@ -176,6 +222,40 @@ int main(int argc, char *argv[])
             case 'r':
                 mode = Mode::TOCHR;
                 break;
+            case 'b': {
+                ++argv;
+                --argc;
+                if (argc == 0) {
+                    fmt::print(stderr, "warning: no argument provided for -b\n");
+                    continue;
+                }
+                auto value = strconv(argv[0]);
+                if (!value) {
+                    fmt::print(stderr, "warning: invalid value {} for -b (default of 2 will be used)\n", argv[0]);
+                    continue;
+                }
+                switch (value.value()) {
+                case 2: case 4: case 8: bpp = value.value(); break;
+                default: fmt::print(stderr, "warning: bpp can only be 2, 4 or 8 (default of 2 will be used)\n");
+                }
+                break;
+            }
+            case 'd': {
+                ++argv;
+                --argc;
+                if (argc == 0) {
+                    fmt::print(stderr, "warning: no argument provided for -d\n");
+                    continue;
+                }
+                std::string_view arg = argv[0];
+                if (arg == "planar")
+                    ; // default
+                else if (arg == "interwined")
+                    datamode = chr::DataMode::Interwined;
+                else
+                    fmt::print(stderr, "warning: invalid argument {} for -d (default \"planar\" will be used)\n", argv[0]);
+                break;
+            }
             default:
                 fmt::print(stderr, "warning: -{}: unknown flag\n", argv[0][1]);
             }
@@ -192,6 +272,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    return mode == Mode::TOIMG ? chr_to_image(input, output ? output : "output.png")
-                               : image_to_chr(input, output ? output : "output.chr");
+    return mode == Mode::TOIMG ? chr_to_image(input, output ? output : "output.png", bpp, datamode)
+                               : image_to_chr(input, output ? output : "output.chr", bpp, datamode);
 }

@@ -5,15 +5,16 @@
 #include <cstring>
 #include <memory>
 
-namespace chr {
-
 using u8  = uint8_t;
 using u32 = uint32_t;
+
+namespace chr {
 
 const int TILES_PER_ROW = 16;
 const int TILE_WIDTH = 8;
 const int TILE_HEIGHT = 8;
-const int BYTES_PER_TILE = 16;
+const int BPP = 2;
+const int BYTES_PER_TILE = BPP * 8;
 const int ROW_SIZE = TILES_PER_ROW * TILE_WIDTH;
 
 namespace {
@@ -52,28 +53,51 @@ namespace {
         return getbits(num, bitno, 1);
     }
 
-    u8 get_pixel_data(std::span<u8> tile, int row, int col)
+    u8 get_pixel_data_interwined(std::span<u8> tile, int row, int col, int bpp)
     {
-        u8 bit = 7 - col;
-        u8 lowbyte = tile[row];
-        u8 hibyte  = tile[row+8];
-        u8 lowbit  = getbit(lowbyte, bit);
-        u8 hibit   = getbit(hibyte, bit);
-        return hibit << 1 | lowbit;
+        u8 nbit = 7 - col;
+        u8 res = 0;
+        for (int i = 0; i < bpp/2; i++) {
+            u8 lowbyte = tile[row*2 + i*16];
+            u8 lowbit = getbit(lowbyte, nbit);
+            res = setbit(res, i*2, lowbit);
+            u8 hibyte = tile[row*2+1 + i*16];
+            u8 hibit  = getbit(hibyte,  nbit);
+            res = setbit(res, i*2 + 1, hibit);
+        }
+        return res;
+    }
+
+    u8 get_pixel_data_planar(std::span<u8> tile, int row, int col, int bpp)
+    {
+        u8 nbit = 7 - col;
+        u8 res = 0;
+        for (int i = 0; i < bpp; i++) {
+            u8 byte = tile[row + i*8];
+            u8 bit  = getbit(byte, nbit);
+            res     = setbit(res, i, bit);
+        }
+        return res;
+    }
+
+    u8 get_pixel_data(std::span<u8> tile, int row, int col, int bpp)
+    {
+        // return get_pixel_data_interwined(tile, row, col, 4);
+        return get_pixel_data_planar(tile, row, col, bpp);
     }
 
     // when converting tiles, they are converted row-wise, i.e. first we convert
     // the first row of every single tile, then the second, etc...
     // get_pixel_data()'s job is to do the conversion for one single tile
-    std::array<u8, ROW_SIZE> get_single_row(std::span<u8> tiles, int row, int num_tiles)
+    std::array<u8, ROW_SIZE> get_single_row(std::span<u8> tiles, int row, int num_tiles, int bpp)
     {
+        int bpt = bpp*8;
         std::array<u8, ROW_SIZE> res;
         // i = tile number; j = tile column
         for (int i = 0; i < TILES_PER_ROW; i++) {
             for (int j = 0; j < 8; j++) {
-                res[i*8 + j] = i < num_tiles
-                    ? get_pixel_data(tiles.subspan(i*BYTES_PER_TILE, BYTES_PER_TILE), row, j)
-                    : 0;
+                res[i*8 + j] = i < num_tiles ?
+                    get_pixel_data(tiles.subspan(i*bpt, bpt), row, j, bpp) : 0;
             }
         }
         return res;
@@ -105,7 +129,7 @@ namespace {
     }
 }
 
-void to_indexed(std::span<uint8_t> bytes, Callback draw_row)
+void to_indexed(std::span<uint8_t> bytes, int bpp, Callback draw_row)
 {
     // this loop inspect 16 tiles each iteration
     // the inner loop gets one single row of pixels, with size equal to the
@@ -116,21 +140,21 @@ void to_indexed(std::span<uint8_t> bytes, Callback draw_row)
         int num_tiles = count / BYTES_PER_TILE;
         std::span<u8> tiles = bytes.subspan(index, count);
         for (int r = 0; r < 8; r++) {
-            auto row = get_single_row(tiles, r, num_tiles);
+            auto row = get_single_row(tiles, r, num_tiles, bpp);
             draw_row(row);
         }
     }
 }
 
-void to_indexed(FILE *fp, Callback callback)
+void to_indexed(FILE *fp, int bpp, Callback callback)
 {
     long size = filesize(fp);
     auto ptr = std::make_unique<u8[]>(size);
     std::fread(ptr.get(), 1, size, fp);
-    to_indexed(std::span{ptr.get(), std::size_t(size)}, callback);
+    to_indexed(std::span{ptr.get(), std::size_t(size)}, bpp, callback);
 }
 
-void to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, Callback2 callback)
+void to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, int bpp, Callback2 callback)
 {
     if (width % 8 != 0 || height % 8 != 0) {
         std::fprintf(stderr, "error: width and height must be a power of 8");
@@ -154,3 +178,17 @@ long img_height(std::size_t num_bytes)
 }
 
 } // namespace chr
+
+// int main()
+// {
+//     std::array<u8, 32> data = { 0x00, 0xff, 0x60, 0xff, 0x70, 0xff, 0x38, 0xff, 0x1c, 0xff, 0x0e, 0xff, 0x07, 0xff, 0x03, 0xff,
+//                                 0x00, 0x00, 0x60, 0x00, 0x70, 0x00, 0x38, 0x00, 0x1c, 0x00, 0x0e, 0x00, 0x07, 0x00, 0x03, 0x00, };
+//     for (int i = 0; i < 8; i++) {
+//         for (int j = 0; j < 8; j++) {
+//             u8 byte = chr::get_pixel_data_interwined(data, j, i, 4);
+//             printf("%d", byte);
+//         }
+//         printf("\n");
+//     }
+// }
+
