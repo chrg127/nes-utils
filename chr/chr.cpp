@@ -80,16 +80,16 @@ namespace {
         return res;
     }
 
-    u8 get_pixel_data(std::span<u8> tile, int row, int col, int bpp)
+    u8 get_pixel_data(std::span<u8> tile, int row, int col, int bpp, DataMode mode)
     {
-        // return get_pixel_data_interwined(tile, row, col, 4);
-        return get_pixel_data_planar(tile, row, col, bpp);
+        return mode == DataMode::Planar ? get_pixel_data_planar(tile, row, col, bpp)
+                                        : get_pixel_data_interwined(tile, row, col, bpp);
     }
 
     // when converting tiles, they are converted row-wise, i.e. first we convert
     // the first row of every single tile, then the second, etc...
     // get_pixel_data()'s job is to do the conversion for one single tile
-    std::array<u8, ROW_SIZE> get_single_row(std::span<u8> tiles, int row, int num_tiles, int bpp)
+    std::array<u8, ROW_SIZE> get_single_row(std::span<u8> tiles, int row, int num_tiles, int bpp, DataMode mode)
     {
         int bpt = bpp*8;
         std::array<u8, ROW_SIZE> res;
@@ -97,7 +97,7 @@ namespace {
         for (int i = 0; i < TILES_PER_ROW; i++) {
             for (int j = 0; j < 8; j++) {
                 res[i*8 + j] = i < num_tiles ?
-                    get_pixel_data(tiles.subspan(i*bpt, bpt), row, j, bpp) : 0;
+                    get_pixel_data(tiles.subspan(i*bpt, bpt), row, j, bpp, mode) : 0;
             }
         }
         return res;
@@ -129,29 +129,30 @@ namespace {
     }
 }
 
-void to_indexed(std::span<uint8_t> bytes, int bpp, Callback draw_row)
+void to_indexed(std::span<uint8_t> bytes, int bpp, DataMode mode, Callback draw_row)
 {
     // this loop inspect 16 tiles each iteration
     // the inner loop gets one single row of pixels, with size equal to the
     // width of the resulting image
-    for (std::size_t index = 0; index < bytes.size(); index += BYTES_PER_TILE * TILES_PER_ROW) {
+    int bpt = bpp*8;
+    for (std::size_t index = 0; index < bytes.size(); index += bpt * TILES_PER_ROW) {
         std::size_t bytes_remaining = bytes.size() - index;
-        std::size_t count = std::min(bytes_remaining, (std::size_t) BYTES_PER_TILE * TILES_PER_ROW);
-        int num_tiles = count / BYTES_PER_TILE;
+        std::size_t count = std::min(bytes_remaining, (std::size_t) bpt * TILES_PER_ROW);
+        int num_tiles = count / bpt;
         std::span<u8> tiles = bytes.subspan(index, count);
         for (int r = 0; r < 8; r++) {
-            auto row = get_single_row(tiles, r, num_tiles, bpp);
+            auto row = get_single_row(tiles, r, num_tiles, bpp, mode);
             draw_row(row);
         }
     }
 }
 
-void to_indexed(FILE *fp, int bpp, Callback callback)
+void to_indexed(FILE *fp, int bpp, DataMode mode, Callback callback)
 {
     long size = filesize(fp);
     auto ptr = std::make_unique<u8[]>(size);
     std::fread(ptr.get(), 1, size, fp);
-    to_indexed(std::span{ptr.get(), std::size_t(size)}, bpp, callback);
+    to_indexed(std::span{ptr.get(), std::size_t(size)}, bpp, mode, callback);
 }
 
 void to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, int bpp, Callback2 callback)
