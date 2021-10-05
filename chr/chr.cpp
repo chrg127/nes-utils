@@ -155,7 +155,7 @@ void to_indexed(FILE *fp, int bpp, DataMode mode, Callback callback)
     to_indexed(std::span{ptr.get(), std::size_t(size)}, bpp, mode, callback);
 }
 
-void to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, int bpp, Callback2 callback)
+void to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, int bpp, Callback write_data)
 {
     if (width % 8 != 0 || height % 8 != 0) {
         std::fprintf(stderr, "error: width and height must be a power of 8");
@@ -165,7 +165,7 @@ void to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, int bpp,
     for (std::size_t j = 0; j < bytes.size(); j += width*TILE_WIDTH) {
         for (std::size_t i = 0; i < width; i += TILE_WIDTH) {
             auto tile = extract_tile(bytes, j+i, width);
-            callback(tile);
+            write_data(tile);
         }
     }
 }
@@ -179,17 +179,3 @@ long img_height(std::size_t num_bytes)
 }
 
 } // namespace chr
-
-// int main()
-// {
-//     std::array<u8, 32> data = { 0x00, 0xff, 0x60, 0xff, 0x70, 0xff, 0x38, 0xff, 0x1c, 0xff, 0x0e, 0xff, 0x07, 0xff, 0x03, 0xff,
-//                                 0x00, 0x00, 0x60, 0x00, 0x70, 0x00, 0x38, 0x00, 0x1c, 0x00, 0x0e, 0x00, 0x07, 0x00, 0x03, 0x00, };
-//     for (int i = 0; i < 8; i++) {
-//         for (int j = 0; j < 8; j++) {
-//             u8 byte = chr::get_pixel_data_interwined(data, j, i, 4);
-//             printf("%d", byte);
-//         }
-//         printf("\n");
-//     }
-// }
-

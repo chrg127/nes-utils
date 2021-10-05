@@ -145,8 +145,6 @@ int image_to_chr(const char *input, const char *output, int bpp, chr::DataMode m
     chr::to_chr(data_transformed, width, height, bpp, [&](std::span<uint8_t> tile) {
         fwrite(tile.data(), 1, tile.size(), out);
     });
-    // std::span<uint8_t> dataspan{data, std::size_t(width*height*channels)};
-    // auto res = chr::to_chr(dataspan, width, height, channels);
 
     fclose(out);
     return 0;
@@ -193,8 +191,27 @@ void usage()
                        "    -r: reverse: convert from image to chr\n");
 }
 
+void test_indexed()
+{
+    std::array<uint8_t, 32> data = { 0x00, 0xff, 0x60, 0xff, 0x70, 0xff, 0x38, 0xff, 0x1c, 0xff, 0x0e, 0xff, 0x07, 0xff, 0x03, 0xff,
+                                     0x00, 0x00, 0x60, 0x00, 0x70, 0x00, 0x38, 0x00, 0x1c, 0x00, 0x0e, 0x00, 0x07, 0x00, 0x03, 0x00, };
+    chr::to_indexed(data, 4, chr::DataMode::Interwined, [](std::span<uint8_t> idata) {
+        for (auto b : idata)
+            fmt::print("{}", b);
+        fmt::print("\n");
+    });
+}
+
+test_chr()
+{
+
+}
+
 int main(int argc, char *argv[])
 {
+    // test();
+    // return 0;
+
     if (argc < 2) {
         usage();
         return 1;
