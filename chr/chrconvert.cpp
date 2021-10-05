@@ -127,8 +127,8 @@ std::optional<T> strconv(const char *str)
 int image_to_chr(const char *input, const char *output, int bpp, chr::DataMode mode)
 {
     int width, height, channels;
-    unsigned char *data = stbi_load(input, &width, &height, &channels, 0);
-    if (!data) {
+    unsigned char *img_data = stbi_load(input, &width, &height, &channels, 0);
+    if (!img_data) {
         fmt::print(stderr, "error: couldn't load image {}\n", input);
         return 1;
     }
@@ -140,9 +140,9 @@ int image_to_chr(const char *input, const char *output, int bpp, chr::DataMode m
         return 1;
     }
 
-    auto tmp = std::span(data, width*height*channels);
-    auto data_transformed = convert_to_indexed(tmp, channels, bpp);
-    chr::to_chr(data_transformed, width, height, bpp, [&](std::span<uint8_t> tile) {
+    auto tmp = std::span(img_data, width*height*channels);
+    auto data = convert_to_indexed(tmp, channels, bpp);
+    chr::to_chr(data, width, height, bpp, mode, [&](std::span<uint8_t> tile) {
         fwrite(tile.data(), 1, tile.size(), out);
     });
 
@@ -202,14 +202,25 @@ void test_indexed()
     });
 }
 
-test_chr()
+void test_chr()
 {
-
+    std::array<uint8_t, 64> data = { 0, 1, 0, 0, 0, 0, 0, 3,
+                                     1, 1, 0, 0, 0, 0, 3, 0,
+                                     0, 1, 0, 0, 0, 3, 0, 0,
+                                     0, 1, 0, 0, 3, 0, 0, 0,
+                                     0, 0, 0, 3, 0, 2, 2, 0,
+                                     0, 0, 3, 0, 0, 0, 0, 2,
+                                     0, 3, 0, 0, 0, 0, 2, 0,
+                                     3, 0, 0, 0, 0, 2, 2, 2 };
+    chr::to_chr(data, 8, 8, 2, chr::DataMode::Planar, [](std::span<uint8_t> chrdata) {
+        for (auto b : chrdata)
+            fmt::print("{:08b}\n", b);
+    });
 }
 
 int main(int argc, char *argv[])
 {
-    // test();
+    // test_chr();
     // return 0;
 
     if (argc < 2) {

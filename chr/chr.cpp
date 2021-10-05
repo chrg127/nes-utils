@@ -17,6 +17,23 @@ const int BPP = 2;
 const int BYTES_PER_TILE = BPP * 8;
 const int ROW_SIZE = TILES_PER_ROW * TILE_WIDTH;
 
+template <typename T>
+class HeapArray {
+    std::unique_ptr<T[]> ptr;
+    std::size_t len = 0;
+
+public:
+    HeapArray() = default;
+    explicit HeapArray(std::size_t s) : ptr(std::make_unique<T[]>(s)), len(s) {}
+    explicit HeapArray(int s) : HeapArray(std::size_t(s)) {}
+
+    T & operator[](std::size_t pos) { return ptr[pos]; }
+    T *data()                       { return ptr.get(); }
+    T *begin() const                { return ptr.get(); }
+    T *end() const                  { return ptr.get() + len; }
+    std::size_t size() const        { return len; }
+};
+
 namespace {
     long filesize(FILE *f)
     {
@@ -52,8 +69,14 @@ namespace {
     {
         return getbits(num, bitno, 1);
     }
+}
 
-    u8 get_pixel_data_interwined(std::span<u8> tile, int row, int col, int bpp)
+
+
+/* decoding functions (chr -> image) */
+
+namespace {
+    u8 decode_pixel_interwined(std::span<u8> tile, int row, int col, int bpp)
     {
         u8 nbit = 7 - col;
         u8 res = 0;
@@ -68,7 +91,7 @@ namespace {
         return res;
     }
 
-    u8 get_pixel_data_planar(std::span<u8> tile, int row, int col, int bpp)
+    u8 decode_pixel_planar(std::span<u8> tile, int row, int col, int bpp)
     {
         u8 nbit = 7 - col;
         u8 res = 0;
@@ -80,16 +103,16 @@ namespace {
         return res;
     }
 
-    u8 get_pixel_data(std::span<u8> tile, int row, int col, int bpp, DataMode mode)
+    u8 decode_pixel(std::span<u8> tile, int row, int col, int bpp, DataMode mode)
     {
-        return mode == DataMode::Planar ? get_pixel_data_planar(tile, row, col, bpp)
-                                        : get_pixel_data_interwined(tile, row, col, bpp);
+        return mode == DataMode::Planar ? decode_pixel_planar(tile, row, col, bpp)
+                                        : decode_pixel_interwined(tile, row, col, bpp);
     }
 
     // when converting tiles, they are converted row-wise, i.e. first we convert
     // the first row of every single tile, then the second, etc...
-    // get_pixel_data()'s job is to do the conversion for one single tile
-    std::array<u8, ROW_SIZE> get_single_row(std::span<u8> tiles, int row, int num_tiles, int bpp, DataMode mode)
+    // decode_pixel()'s job is to do the conversion for one single tile
+    std::array<u8, ROW_SIZE> decode_row(std::span<u8> tiles, int row, int num_tiles, int bpp, DataMode mode)
     {
         int bpt = bpp*8;
         std::array<u8, ROW_SIZE> res;
@@ -97,36 +120,12 @@ namespace {
         for (int i = 0; i < TILES_PER_ROW; i++) {
             for (int j = 0; j < 8; j++) {
                 res[i*8 + j] = i < num_tiles ?
-                    get_pixel_data(tiles.subspan(i*bpt, bpt), row, j, bpp, mode) : 0;
+                    decode_pixel(tiles.subspan(i*bpt, bpt), row, j, bpp, mode) : 0;
             }
         }
         return res;
     }
 
-    // loop over a row of a single tile, return low byte and high byte
-    auto encode_row(std::span<u8> row)
-    {
-        u8 low = 0, hi = 0;
-        for (int i = 0; i < 8; i++) {
-            u8 bits = row[i];
-            low = setbit(low, 7-i, getbit(bits, 1));
-            hi  = setbit(hi,  7-i, getbit(bits, 0));
-        }
-        return std::pair{low, hi};
-    }
-
-    // loop over the rows of a single tile. si = start index
-    std::array<u8, BYTES_PER_TILE> extract_tile(std::span<u8> bytes, std::size_t si, std::size_t width)
-    {
-        std::array<u8, BYTES_PER_TILE> res;
-        for (int y = 0; y < TILE_HEIGHT; y++) {
-            std::size_t ri = si + y*width;
-            auto [low, hi] = encode_row(bytes.subspan(ri, TILE_WIDTH));
-            res[y  ] = hi;
-            res[y+8] = low;
-        }
-        return res;
-    }
 }
 
 void to_indexed(std::span<uint8_t> bytes, int bpp, DataMode mode, Callback draw_row)
@@ -141,7 +140,7 @@ void to_indexed(std::span<uint8_t> bytes, int bpp, DataMode mode, Callback draw_
         int num_tiles = count / bpt;
         std::span<u8> tiles = bytes.subspan(index, count);
         for (int r = 0; r < 8; r++) {
-            auto row = get_single_row(tiles, r, num_tiles, bpp, mode);
+            auto row = decode_row(tiles, r, num_tiles, bpp, mode);
             draw_row(row);
         }
     }
@@ -155,7 +154,50 @@ void to_indexed(FILE *fp, int bpp, DataMode mode, Callback callback)
     to_indexed(std::span{ptr.get(), std::size_t(size)}, bpp, mode, callback);
 }
 
-void to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, int bpp, Callback write_data)
+
+
+/* encoding functions (image -> chr) */
+
+namespace {
+    // encode single row of tile, returns a byte for each plane
+    HeapArray<u8> encode_row(std::span<u8> row, int bpp)
+    {
+        HeapArray<u8> bytes{bpp};
+        for (int i = 0; i < bpp; i++) {
+            u8 byte = 0;
+            for (int c = 0; c < 8; c++) {
+                u8 bits = row[c];
+                byte = setbit(byte, 7-c, getbit(bits, i));
+            }
+            bytes[i] = byte;
+        }
+        return bytes;
+    }
+
+    // loop over the rows of a single tile. si = start index
+    HeapArray<u8> encode_tile(std::span<u8> tiles, std::size_t si, std::size_t width, int bpp, DataMode mode)
+    {
+        int bpt = bpp*8;
+        HeapArray<u8> res{bpt};
+
+        for (int y = 0; y < TILE_HEIGHT; y++) {
+            std::size_t ri = si + y*width;
+            auto bytes = encode_row(tiles.subspan(ri, TILE_WIDTH), bpp);
+            if (mode == DataMode::Planar) {
+                for (std::size_t i = 0; i < bytes.size(); i++)
+                    res[y + i*8] = bytes[i];
+            } else {
+                for (std::size_t i = 0; i < bytes.size()/2; i++) {
+                    res[y*2 + i*16    ] = bytes[i*2  ];
+                    res[y*2 + i*16 + 1] = bytes[i*2+1];
+                }
+            }
+        }
+        return res;
+    }
+}
+
+void to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, int bpp, DataMode mode, Callback write_data)
 {
     if (width % 8 != 0 || height % 8 != 0) {
         std::fprintf(stderr, "error: width and height must be a power of 8");
@@ -164,11 +206,13 @@ void to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, int bpp,
 
     for (std::size_t j = 0; j < bytes.size(); j += width*TILE_WIDTH) {
         for (std::size_t i = 0; i < width; i += TILE_WIDTH) {
-            auto tile = extract_tile(bytes, j+i, width);
+            auto tile = encode_tile(bytes, j+i, width, bpp, mode);
             write_data(tile);
         }
     }
 }
+
+
 
 long img_height(std::size_t num_bytes)
 {
