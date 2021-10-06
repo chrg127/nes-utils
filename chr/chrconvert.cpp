@@ -12,111 +12,6 @@
 #include "stb_image.h"
 #include "chr.hpp"
 
-class ColorRGBA {
-    std::array<uint8_t, 4> data;
-public:
-    constexpr ColorRGBA() = default;
-    constexpr ColorRGBA(uint8_t r, uint8_t g, uint8_t b, uint8_t a) : data({r, g, b, a}) { }
-
-    explicit ColorRGBA(std::span<uint8_t> color)
-    {
-        if (color.size() == 1) {
-            data[0] = data[1] = data[2] = color[0];
-            data[3] = 0xFF;
-        } else {
-            data[0] = color[0];
-            data[1] = color[1];
-            data[2] = color[2];
-            data[3] = color.size() >= 4 ? color[3] : 0xFF;
-        }
-    }
-
-    constexpr uint8_t red() const   { return data[0]; }
-    constexpr uint8_t green() const { return data[1]; }
-    constexpr uint8_t blue() const  { return data[2]; }
-    constexpr uint8_t alpha() const { return data[3]; }
-    constexpr uint8_t operator[](std::size_t i) const { return data[i]; }
-};
-
-inline bool operator==(const ColorRGBA &c1, const ColorRGBA &c2)
-{
-    return c1[0] == c2[0] && c1[1] == c2[1] && c1[2] == c2[2] && c1[3] == c2[3];
-}
-
-constexpr unsigned pow2(unsigned n)
-{
-    int r = 1;
-    while (n-- > 0) {
-        r *= 2;
-    }
-    return r;
-}
-
-template <unsigned BPP>
-constexpr std::array<ColorRGBA, pow2(BPP)> make_default_palette()
-{
-    constexpr unsigned N = pow2(BPP);
-    constexpr uint8_t base = 0xFF / (N-1);
-    std::array<ColorRGBA, N> palette;
-    for (int i = 0; i < N; i++) {
-        uint8_t value = base * i;
-        palette[i] = ColorRGBA{value, value, value, 0xFF};
-    }
-    return palette;
-}
-
-static const auto palette_2bpp = make_default_palette<2>();
-static const auto palette_3bpp = make_default_palette<3>();
-static const auto palette_4bpp = make_default_palette<4>();
-static const auto palette_8bpp = make_default_palette<8>();
-
-std::span<const ColorRGBA> get_palette(int bpp)
-{
-    switch (bpp) {
-    case 2:  return palette_2bpp;
-    case 3:  return palette_3bpp;
-    case 4:  return palette_4bpp;
-    case 8:  return palette_8bpp;
-    default: return std::span<const ColorRGBA>{};
-    }
-}
-
-const ColorRGBA get_color(int color, int bpp)
-{
-    return get_palette(bpp)[color];
-}
-
-int find_color(ColorRGBA color, int bpp)
-{
-    auto pal = get_palette(bpp);
-    auto it = std::find(pal.begin(), pal.end(), color);
-    return it != pal.end() ? it - pal.begin() : -1;
-}
-
-void dumppal(int bpp)
-{
-    auto pal = get_palette(bpp);
-    for (auto color : pal)
-        fmt::print("{:02X} {:02X} {:02X}\n", color.red(), color.green(), color.blue());
-}
-
-std::vector<uint8_t> convert_to_indexed(std::span<unsigned char> data, int channels, int bpp)
-{
-    std::vector<uint8_t> output;
-    output.reserve(data.size() / channels);
-
-    for (std::size_t i = 0; i < data.size(); i += channels) {
-        ColorRGBA color{data.subspan(i, channels)};
-        int index = find_color(color, bpp);
-        if (index == -1) {
-            fmt::print(stderr, "warning: color not present in palette\n");
-            output.push_back(0);
-        }
-        output.push_back(index);
-    }
-    return output;
-}
-
 long filesize(FILE *f)
 {
     fseek(f, 0, SEEK_END);
@@ -153,8 +48,9 @@ int image_to_chr(const char *input, const char *output, int bpp, chr::DataMode m
         return 1;
     }
 
+    chr::Palette pal{bpp};
     auto tmp = std::span(img_data, width*height*channels);
-    auto data = convert_to_indexed(tmp, channels, bpp);
+    auto data = chr::palette_to_indexed(tmp, pal, channels, bpp);
     chr::to_chr(data, width, height, bpp, mode, [&](std::span<uint8_t> tile) {
         fwrite(tile.data(), 1, tile.size(), out);
     });
@@ -177,10 +73,11 @@ int chr_to_image(const char *input, const char *output, int bpp, chr::DataMode m
     int y = 0;
 
     img.fill(0);
+    chr::Palette palette{bpp};
     chr::to_indexed(f, bpp, mode, [&](std::span<uint8_t> row)
     {
         for (int x = 0; x < 128; x++) {
-            const auto color = get_color(row[x], bpp);
+            const auto color = palette[row[x]];
             img(x, y, 0) = color.red();
             img(x, y, 1) = color.green();
             img(x, y, 2) = color.blue();
@@ -202,33 +99,6 @@ void usage()
                        "    -h: show this help text\n"
                        "    -o FILENAME: output to FILENAME\n"
                        "    -r: reverse: convert from image to chr\n");
-}
-
-void test_indexed()
-{
-    std::array<uint8_t, 32> data = { 0x00, 0xff, 0x60, 0xff, 0x70, 0xff, 0x38, 0xff, 0x1c, 0xff, 0x0e, 0xff, 0x07, 0xff, 0x03, 0xff,
-                                     0x00, 0x00, 0x60, 0x00, 0x70, 0x00, 0x38, 0x00, 0x1c, 0x00, 0x0e, 0x00, 0x07, 0x00, 0x03, 0x00, };
-    chr::to_indexed(data, 4, chr::DataMode::Interwined, [](std::span<uint8_t> idata) {
-        for (auto b : idata)
-            fmt::print("{}", b);
-        fmt::print("\n");
-    });
-}
-
-void test_chr()
-{
-    std::array<uint8_t, 64> data = { 0, 1, 0, 0, 0, 0, 0, 3,
-                                     1, 1, 0, 0, 0, 0, 3, 0,
-                                     0, 1, 0, 0, 0, 3, 0, 0,
-                                     0, 1, 0, 0, 3, 0, 0, 0,
-                                     0, 0, 0, 3, 0, 2, 2, 0,
-                                     0, 0, 3, 0, 0, 0, 0, 2,
-                                     0, 3, 0, 0, 0, 0, 2, 0,
-                                     3, 0, 0, 0, 0, 2, 2, 2 };
-    chr::to_chr(data, 8, 8, 2, chr::DataMode::Planar, [](std::span<uint8_t> chrdata) {
-        for (auto b : chrdata)
-            fmt::print("{:08b}\n", b);
-    });
 }
 
 int main(int argc, char *argv[])

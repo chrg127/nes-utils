@@ -53,6 +53,62 @@ namespace {
     {
         return getbits(num, bitno, 1);
     }
+
+    constexpr unsigned pow2(unsigned n)
+    {
+        int r = 1;
+        while (n-- > 0) {
+            r *= 2;
+        }
+        return r;
+    }
+
+    template <unsigned BPP>
+    constexpr std::array<ColorRGBA, pow2(BPP)> make_default_palette()
+    {
+        constexpr unsigned N = pow2(BPP);
+        constexpr uint8_t base = 0xFF / (N-1);
+        std::array<ColorRGBA, N> palette;
+        for (unsigned i = 0; i < N; i++) {
+            uint8_t value = base * i;
+            palette[i] = ColorRGBA{value, value, value, 0xFF};
+        }
+        return palette;
+    }
+
+    const auto palette_2bpp = make_default_palette<2>();
+    const auto palette_3bpp = make_default_palette<3>();
+    const auto palette_4bpp = make_default_palette<4>();
+    const auto palette_8bpp = make_default_palette<8>();
+
+    std::span<const ColorRGBA> get_palette(int bpp)
+    {
+        switch (bpp) {
+        case 2:  return palette_2bpp;
+        case 3:  return palette_3bpp;
+        case 4:  return palette_4bpp;
+        case 8:  return palette_8bpp;
+        default: return std::span<const ColorRGBA>{};
+        }
+    }
+}
+
+
+
+Palette::Palette(int bpp)
+    : data(get_palette(bpp))
+{ }
+
+int Palette::find_color(ColorRGBA color) const
+{
+    auto it = std::find(data.begin(), data.end(), color);
+    return it != data.end() ? it - data.begin() : -1;
+}
+
+void Palette::dump() const
+{
+    for (auto color : data)
+        fprintf(stderr, "%02X %02X %02X\n", color.red(), color.green(), color.blue());
 }
 
 
@@ -215,6 +271,23 @@ long img_height(std::size_t num_bytes, int bpp)
     std::size_t base = bpt * TILES_PER_ROW;
     num_bytes = num_bytes % base == 0 ? num_bytes : (num_bytes/base + 1) * base;
     return num_bytes / bpt / TILES_PER_ROW * 8;
+}
+
+HeapArray<uint8_t> palette_to_indexed(std::span<uint8_t> data, const Palette &palette, int channels, int bpp)
+{
+    HeapArray<u8> output{data.size() / channels};
+    auto it = output.begin();
+
+    for (std::size_t i = 0; i < data.size(); i += channels) {
+        ColorRGBA color{data.subspan(i, channels)};
+        int index = palette.find_color(color);
+        if (index == -1) {
+            fprintf(stderr, "warning: color not present in palette\n");
+            *it++ = 0;
+        }
+        *it++ = index;
+    }
+    return output;
 }
 
 } // namespace chr
