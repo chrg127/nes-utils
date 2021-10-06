@@ -98,7 +98,25 @@ void usage()
                        "valid flags:\n"
                        "    -h: show this help text\n"
                        "    -o FILENAME: output to FILENAME\n"
-                       "    -r: reverse: convert from image to chr\n");
+                       "    -r: reverse: convert from image to chr\n"
+                       "    -b: select bpp (bits per pixel)\n"
+                       "    -d: select data mode (planar | interwined)\n"
+                       "    -m: select mode (nes | snes)\n");
+}
+
+bool select_mode(std::string_view arg, int &bpp, chr::DataMode &mode)
+{
+    if (arg == "nes") {
+        bpp = 2;
+        mode = chr::DataMode::Planar;
+        return true;
+    }
+    if (arg == "snes") {
+        bpp = 4;
+        mode = chr::DataMode::Interwined;
+        return true;
+    }
+    return false;
 }
 
 int main(int argc, char *argv[])
@@ -162,6 +180,17 @@ int main(int argc, char *argv[])
                     datamode = chr::DataMode::Interwined;
                 else
                     fmt::print(stderr, "warning: invalid argument {} for -d (default \"planar\" will be used)\n", argv[0]);
+                break;
+            }
+            case 'm': {
+                ++argv;
+                --argc;
+                if (argc == 0) {
+                    fmt::print(stderr, "warning: no argument provided for -m\n");
+                    continue;
+                }
+                if (!select_mode(argv[0], bpp, datamode))
+                    fmt::print(stderr, "warning: invalid mode (defaults will be used)\n");
                 break;
             }
             default:
