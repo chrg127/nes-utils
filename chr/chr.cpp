@@ -273,7 +273,7 @@ long img_height(std::size_t num_bytes, int bpp)
     return num_bytes / bpt / TILES_PER_ROW * 8;
 }
 
-HeapArray<uint8_t> palette_to_indexed(std::span<uint8_t> data, const Palette &palette, int channels, int bpp)
+HeapArray<uint8_t> palette_to_indexed(std::span<uint8_t> data, const Palette &palette, int channels)
 {
     HeapArray<u8> output{data.size() / channels};
     auto it = output.begin();
@@ -287,6 +287,14 @@ HeapArray<uint8_t> palette_to_indexed(std::span<uint8_t> data, const Palette &pa
         }
         *it++ = index;
     }
+    return output;
+}
+
+HeapArray<ColorRGBA> indexed_to_palette(std::span<uint8_t> data, const Palette &palette)
+{
+    HeapArray<ColorRGBA> output{data.size()};
+    for (std::size_t i = 0; i < data.size(); i++)
+        output[i] = palette[i];
     return output;
 }
 

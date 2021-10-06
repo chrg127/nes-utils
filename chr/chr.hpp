@@ -42,13 +42,10 @@ public:
     constexpr uint8_t blue() const  { return data[2]; }
     constexpr uint8_t alpha() const { return data[3]; }
     constexpr uint8_t operator[](std::size_t i) const { return data[i]; }
-    bool operator==(const ColorRGBA &c) { return data == c.data; }
+    friend bool operator==(const ColorRGBA &c1, const ColorRGBA &c2);
 };
 
-inline bool operator==(const ColorRGBA &c1, const ColorRGBA &c2)
-{
-    return c1[0] == c2[0] && c1[1] == c2[1] && c1[2] == c2[2] && c1[3] == c2[3];
-}
+inline bool operator==(const ColorRGBA &c1, const ColorRGBA &c2) { return c1.data == c2.data; }
 
 class Palette {
     std::span<const ColorRGBA> data;
@@ -80,6 +77,7 @@ void to_indexed(std::span<uint8_t> bytes, int bpp, DataMode mode, Callback draw_
 void to_indexed(FILE *fp, int bpp, DataMode mode, Callback draw_row);
 void to_chr(std::span<uint8_t> bytes, std::size_t width, std::size_t height, int bpp, DataMode mode, Callback write_data);
 long img_height(std::size_t num_bytes, int bpp);
-HeapArray<uint8_t> palette_to_indexed(std::span<uint8_t> data, const Palette &palette, int channels, int bpp);
+HeapArray<uint8_t> palette_to_indexed(std::span<uint8_t> data, const Palette &palette, int channels);
+HeapArray<ColorRGBA> indexed_to_palette(std::span<uint8_t> data, const Palette &palette);
 
 } // namespace chr

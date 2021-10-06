@@ -50,7 +50,7 @@ int image_to_chr(const char *input, const char *output, int bpp, chr::DataMode m
 
     chr::Palette pal{bpp};
     auto tmp = std::span(img_data, width*height*channels);
-    auto data = chr::palette_to_indexed(tmp, pal, channels, bpp);
+    auto data = chr::palette_to_indexed(tmp, pal, channels);
     chr::to_chr(data, width, height, bpp, mode, [&](std::span<uint8_t> tile) {
         fwrite(tile.data(), 1, tile.size(), out);
     });
