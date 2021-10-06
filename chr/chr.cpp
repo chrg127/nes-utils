@@ -16,23 +16,7 @@ const int TILE_HEIGHT = 8;
 const int BPP = 2;
 const int BYTES_PER_TILE = BPP * 8;
 const int ROW_SIZE = TILES_PER_ROW * TILE_WIDTH;
-
-template <typename T>
-class HeapArray {
-    std::unique_ptr<T[]> ptr;
-    std::size_t len = 0;
-
-public:
-    HeapArray() = default;
-    explicit HeapArray(std::size_t s) : ptr(std::make_unique<T[]>(s)), len(s) {}
-    explicit HeapArray(int s) : HeapArray(std::size_t(s)) {}
-
-    T & operator[](std::size_t pos) { return ptr[pos]; }
-    T *data()                       { return ptr.get(); }
-    T *begin() const                { return ptr.get(); }
-    T *end() const                  { return ptr.get() + len; }
-    std::size_t size() const        { return len; }
-};
+const int MAX_BPP = 8;
 
 namespace {
     long filesize(FILE *f)
@@ -160,9 +144,9 @@ void to_indexed(FILE *fp, int bpp, DataMode mode, Callback callback)
 
 namespace {
     // encode single row of tile, returns a byte for each plane
-    HeapArray<u8> encode_row(std::span<u8> row, int bpp)
+    std::array<u8, MAX_BPP> encode_row(std::span<u8> row, int bpp)
     {
-        HeapArray<u8> bytes{bpp};
+        std::array<u8, MAX_BPP> bytes;
         for (int i = 0; i < bpp; i++) {
             u8 byte = 0;
             for (int c = 0; c < 8; c++) {
@@ -175,19 +159,17 @@ namespace {
     }
 
     // loop over the rows of a single tile. si = start index
-    HeapArray<u8> encode_tile(std::span<u8> tiles, std::size_t si, std::size_t width, int bpp, DataMode mode)
+    std::array<u8, MAX_BPP*8> encode_tile(std::span<u8> tiles, std::size_t si, std::size_t width, int bpp, DataMode mode)
     {
-        int bpt = bpp*8;
-        HeapArray<u8> res{bpt};
-
+        std::array<u8, MAX_BPP*8> res;
         for (int y = 0; y < TILE_HEIGHT; y++) {
             std::size_t ri = si + y*width;
             auto bytes = encode_row(tiles.subspan(ri, TILE_WIDTH), bpp);
             if (mode == DataMode::Planar) {
-                for (std::size_t i = 0; i < bytes.size(); i++)
+                for (int i = 0; i < bpp; i++)
                     res[y + i*8] = bytes[i];
             } else {
-                for (std::size_t i = 0; i < bytes.size()/2; i++) {
+                for (int i = 0; i < bpp/2; i++) {
                     res[y*2 + i*16    ] = bytes[i*2  ];
                     res[y*2 + i*16 + 1] = bytes[i*2+1];
                 }
@@ -207,7 +189,8 @@ void to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, int bpp,
     for (std::size_t j = 0; j < bytes.size(); j += width*TILE_WIDTH) {
         for (std::size_t i = 0; i < width; i += TILE_WIDTH) {
             auto tile = encode_tile(bytes, j+i, width, bpp, mode);
-            write_data(tile);
+            std::span<u8> tilespan{tile.begin(), tile.begin() + bpp*8};
+            write_data(tilespan);
         }
     }
 }
