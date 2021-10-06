@@ -60,21 +60,6 @@ namespace {
 /* decoding functions (chr -> image) */
 
 namespace {
-    u8 decode_pixel_interwined(std::span<u8> tile, int row, int col, int bpp)
-    {
-        u8 nbit = 7 - col;
-        u8 res = 0;
-        for (int i = 0; i < bpp/2; i++) {
-            u8 lowbyte = tile[row*2 + i*16];
-            u8 lowbit = getbit(lowbyte, nbit);
-            res = setbit(res, i*2, lowbit);
-            u8 hibyte = tile[row*2+1 + i*16];
-            u8 hibit  = getbit(hibyte,  nbit);
-            res = setbit(res, i*2 + 1, hibit);
-        }
-        return res;
-    }
-
     u8 decode_pixel_planar(std::span<u8> tile, int row, int col, int bpp)
     {
         u8 nbit = 7 - col;
@@ -83,6 +68,27 @@ namespace {
             u8 byte = tile[row + i*8];
             u8 bit  = getbit(byte, nbit);
             res     = setbit(res, i, bit);
+        }
+        return res;
+    }
+
+    u8 decode_pixel_interwined(std::span<u8> tile, int row, int col, int bpp)
+    {
+        u8 nbit = 7 - col;
+        u8 res = 0;
+        for (int i = 0; i < bpp/2; i++) {
+            u8 lowbyte = tile[i*16 + row*2    ];
+            u8 hibyte  = tile[i*16 + row*2 + 1];
+            u8 lowbit  = getbit(lowbyte, nbit);
+            u8 hibit   = getbit(hibyte,  nbit);
+            res        = setbit(res, i*2,     lowbit);
+            res        = setbit(res, i*2 + 1, hibit);
+        }
+        if (bpp % 2 != 0) {
+            int i = bpp/2;
+            u8 byte = tile[i*16 + row];
+            u8 bit  = getbit(byte, nbit);
+            res     = setbit(res, i*2, bit);
         }
         return res;
     }
@@ -102,14 +108,13 @@ namespace {
         std::array<u8, ROW_SIZE> res;
         // i = tile number; j = tile column
         for (int i = 0; i < TILES_PER_ROW; i++) {
+            std::span<u8> tile = tiles.subspan(i*bpt, bpt);
             for (int j = 0; j < 8; j++) {
-                res[i*8 + j] = i < num_tiles ?
-                    decode_pixel(tiles.subspan(i*bpt, bpt), row, j, bpp, mode) : 0;
+                res[i*8 + j] = i < num_tiles ? decode_pixel(tile, row, j, bpp, mode) : 0;
             }
         }
         return res;
     }
-
 }
 
 void to_indexed(std::span<uint8_t> bytes, int bpp, DataMode mode, Callback draw_row)
@@ -123,7 +128,7 @@ void to_indexed(std::span<uint8_t> bytes, int bpp, DataMode mode, Callback draw_
         std::size_t count = std::min(bytes_remaining, (std::size_t) bpt * TILES_PER_ROW);
         int num_tiles = count / bpt;
         std::span<u8> tiles = bytes.subspan(index, count);
-        for (int r = 0; r < 8; r++) {
+        for (int r = 0; r < TILE_HEIGHT; r++) {
             auto row = decode_row(tiles, r, num_tiles, bpp, mode);
             draw_row(row);
         }
@@ -158,7 +163,7 @@ namespace {
         return bytes;
     }
 
-    // loop over the rows of a single tile. si = start index
+    // loop over the rows of a single tile, returns bytes of encoded tile. si = start index
     std::array<u8, MAX_BPP*8> encode_tile(std::span<u8> tiles, std::size_t si, std::size_t width, int bpp, DataMode mode)
     {
         std::array<u8, MAX_BPP*8> res;
@@ -170,8 +175,12 @@ namespace {
                     res[y + i*8] = bytes[i];
             } else {
                 for (int i = 0; i < bpp/2; i++) {
-                    res[y*2 + i*16    ] = bytes[i*2  ];
-                    res[y*2 + i*16 + 1] = bytes[i*2+1];
+                    res[i*16 + y*2    ] = bytes[i*2  ];
+                    res[i*16 + y*2 + 1] = bytes[i*2+1];
+                }
+                if (bpp % 2 != 0) {
+                    int i = bpp/2;
+                    res[i*16 + y] = bytes[i*2];
                 }
             }
         }
