@@ -76,6 +76,7 @@ namespace {
         return palette;
     }
 
+    const auto palette_1bpp = make_default_palette<1>();
     const auto palette_2bpp = make_default_palette<2>();
     const auto palette_3bpp = make_default_palette<3>();
     const auto palette_4bpp = make_default_palette<4>();
@@ -84,11 +85,17 @@ namespace {
     std::span<const ColorRGBA> get_palette(int bpp)
     {
         switch (bpp) {
+        case 1:  return palette_1bpp;
         case 2:  return palette_2bpp;
         case 3:  return palette_3bpp;
         case 4:  return palette_4bpp;
+        case 5:  return make_default_palette<5>();
+        case 6:  return make_default_palette<6>();
+        case 7:  return make_default_palette<7>();
         case 8:  return palette_8bpp;
-        default: return std::span<const ColorRGBA>{};
+        default:
+            fprintf(stderr, "no default palette bpp of value %d\n", bpp);
+            return std::span<const ColorRGBA>{};
         }
     }
 }
@@ -284,8 +291,8 @@ HeapArray<uint8_t> palette_to_indexed(std::span<uint8_t> data, const Palette &pa
         if (index == -1) {
             fprintf(stderr, "warning: color not present in palette\n");
             *it++ = 0;
-        }
-        *it++ = index;
+        } else
+            *it++ = index;
     }
     return output;
 }

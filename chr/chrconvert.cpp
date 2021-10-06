@@ -99,9 +99,9 @@ void usage()
                        "    -h: show this help text\n"
                        "    -o FILENAME: output to FILENAME\n"
                        "    -r: reverse: convert from image to chr\n"
-                       "    -b: select bpp (bits per pixel)\n"
-                       "    -d: select data mode (planar | interwined)\n"
-                       "    -m: select mode (nes | snes)\n");
+                       "    -b NUMBER: select bpp (bits per pixel)\n"
+                       "    -d (planar | interwined): select data mode\n"
+                       "    -m (nes | snes): select mode\n");
 }
 
 bool select_mode(std::string_view arg, int &bpp, chr::DataMode &mode)
@@ -160,10 +160,11 @@ int main(int argc, char *argv[])
                     fmt::print(stderr, "warning: invalid value {} for -b (default of 2 will be used)\n", argv[0]);
                     continue;
                 }
-                switch (value.value()) {
-                case 2: case 3: case 4: case 8: bpp = value.value(); break;
-                default: fmt::print(stderr, "warning: bpp can only be 2, 3, 4 or 8 (default of 2 will be used)\n");
+                if (value.value() == 0 || value.value() > 8) {
+                    fmt::print(stderr, "warning: bpp can only be 1 to 8 (default of 2 will be used)\n");
+                    continue;
                 }
+                bpp = value.value();
                 break;
             }
             case 'd': {
