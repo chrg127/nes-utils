@@ -214,12 +214,15 @@ void to_chr(std::span<u8> bytes, std::size_t width, std::size_t height, int bpp,
 
 
 
-long img_height(std::size_t num_bytes)
+long img_height(std::size_t num_bytes, int bpp)
 {
-    // we put 16 tiles on every row. this corresponds to exactly 256 bytes for
-    // every row and means we must make sure to have a multiple of 256.
-    num_bytes = num_bytes % 256 == 0 ? num_bytes : (num_bytes/256 + 1) * 256;
-    return num_bytes / 16 / 16 * 8;
+    // We put 16 tiles on every row. If we have, for example, bpp = 2,
+    // this corresponds to exactly 256 bytes for every row and means
+    // we must make sure to have a multiple of 256.
+    std::size_t bpt = bpp*8;
+    std::size_t base = bpt * TILES_PER_ROW;
+    num_bytes = num_bytes % base == 0 ? num_bytes : (num_bytes/base + 1) * base;
+    return num_bytes / bpt / TILES_PER_ROW * 8;
 }
 
 } // namespace chr

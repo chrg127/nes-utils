@@ -159,7 +159,7 @@ int chr_to_image(const char *input, const char *output, int bpp, chr::DataMode m
         return 1;
     }
 
-    size_t height = chr::img_height(filesize(f));
+    size_t height = chr::img_height(filesize(f), bpp);
     cimg_library::CImg<unsigned char> img(16 * 8, height, 1, 4);
     int y = 0;
 
