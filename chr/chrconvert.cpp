@@ -12,10 +12,11 @@
 #include "stb_image.h"
 #include "chr.hpp"
 
-struct ColorRGBA {
+class ColorRGBA {
     std::array<uint8_t, 4> data;
-
+public:
     constexpr ColorRGBA() = default;
+    constexpr ColorRGBA(uint8_t r, uint8_t g, uint8_t b, uint8_t a) : data({r, g, b, a}) { }
 
     explicit ColorRGBA(std::span<uint8_t> color)
     {
@@ -30,30 +31,34 @@ struct ColorRGBA {
         }
     }
 
-    constexpr ColorRGBA(uint8_t r, uint8_t g, uint8_t b, uint8_t a) : data({r, g, b, a}) { }
-
     constexpr uint8_t red() const   { return data[0]; }
     constexpr uint8_t green() const { return data[1]; }
     constexpr uint8_t blue() const  { return data[2]; }
     constexpr uint8_t alpha() const { return data[3]; }
-
-    constexpr uint8_t operator[](std::size_t i) { return data[i]; }
+    constexpr uint8_t operator[](std::size_t i) const { return data[i]; }
 };
 
 inline bool operator==(const ColorRGBA &c1, const ColorRGBA &c2)
 {
-    return c1.data[0] == c2.data[0]
-        && c1.data[1] == c2.data[1]
-        && c1.data[2] == c2.data[2]
-        && c1.data[3] == c2.data[3];
+    return c1[0] == c2[0] && c1[1] == c2[1] && c1[2] == c2[2] && c1[3] == c2[3];
+}
+
+constexpr unsigned pow2(unsigned n)
+{
+    int r = 1;
+    while (n-- > 0) {
+        r *= 2;
+    }
+    return r;
 }
 
 template <unsigned BPP>
-constexpr std::array<ColorRGBA, BPP*BPP> make_default_palette()
+constexpr std::array<ColorRGBA, pow2(BPP)> make_default_palette()
 {
-    std::array<ColorRGBA, BPP*BPP> palette;
-    constexpr uint8_t base = 0xFF / (BPP*BPP-1);
-    for (int i = 0; i < BPP*BPP; i++) {
+    constexpr unsigned N = pow2(BPP);
+    constexpr uint8_t base = 0xFF / (N-1);
+    std::array<ColorRGBA, N> palette;
+    for (int i = 0; i < N; i++) {
         uint8_t value = base * i;
         palette[i] = ColorRGBA{value, value, value, 0xFF};
     }
@@ -61,30 +66,38 @@ constexpr std::array<ColorRGBA, BPP*BPP> make_default_palette()
 }
 
 static const auto palette_2bpp = make_default_palette<2>();
+static const auto palette_3bpp = make_default_palette<3>();
 static const auto palette_4bpp = make_default_palette<4>();
 static const auto palette_8bpp = make_default_palette<8>();
 
-ColorRGBA get_color(int color, int bpp)
+std::span<const ColorRGBA> get_palette(int bpp)
 {
-    if (bpp == 2) return palette_2bpp[color];
-    if (bpp == 4) return palette_4bpp[color];
-    if (bpp == 8) return palette_8bpp[color];
-    return ColorRGBA{};
+    switch (bpp) {
+    case 2:  return palette_2bpp;
+    case 3:  return palette_3bpp;
+    case 4:  return palette_4bpp;
+    case 8:  return palette_8bpp;
+    default: return std::span<const ColorRGBA>{};
+    }
 }
 
-template <std::size_t Size>
-int array_find_color(const std::array<ColorRGBA, Size> &palette, ColorRGBA color)
+const ColorRGBA get_color(int color, int bpp)
 {
-    auto it = std::find(palette.begin(), palette.end(), color);
-    return it != palette.end() ? it - palette.begin() : -1;
+    return get_palette(bpp)[color];
 }
 
 int find_color(ColorRGBA color, int bpp)
 {
-    if (bpp == 2) return array_find_color(palette_2bpp, color);
-    if (bpp == 4) return array_find_color(palette_4bpp, color);
-    if (bpp == 8) return array_find_color(palette_8bpp, color);
-    return -1;
+    auto pal = get_palette(bpp);
+    auto it = std::find(pal.begin(), pal.end(), color);
+    return it != pal.end() ? it - pal.begin() : -1;
+}
+
+void dumppal(int bpp)
+{
+    auto pal = get_palette(bpp);
+    for (auto color : pal)
+        fmt::print("{:02X} {:02X} {:02X}\n", color.red(), color.green(), color.blue());
 }
 
 std::vector<uint8_t> convert_to_indexed(std::span<unsigned char> data, int channels, int bpp)
@@ -97,7 +110,7 @@ std::vector<uint8_t> convert_to_indexed(std::span<unsigned char> data, int chann
         int index = find_color(color, bpp);
         if (index == -1) {
             fmt::print(stderr, "warning: color not present in palette\n");
-            continue;
+            output.push_back(0);
         }
         output.push_back(index);
     }
@@ -167,7 +180,7 @@ int chr_to_image(const char *input, const char *output, int bpp, chr::DataMode m
     chr::to_indexed(f, bpp, mode, [&](std::span<uint8_t> row)
     {
         for (int x = 0; x < 128; x++) {
-            auto color = get_color(row[x], bpp);
+            const auto color = get_color(row[x], bpp);
             img(x, y, 0) = color.red();
             img(x, y, 1) = color.green();
             img(x, y, 2) = color.blue();
@@ -220,9 +233,6 @@ void test_chr()
 
 int main(int argc, char *argv[])
 {
-    // test_chr();
-    // return 0;
-
     if (argc < 2) {
         usage();
         return 1;
@@ -263,8 +273,8 @@ int main(int argc, char *argv[])
                     continue;
                 }
                 switch (value.value()) {
-                case 2: case 4: case 8: bpp = value.value(); break;
-                default: fmt::print(stderr, "warning: bpp can only be 2, 4 or 8 (default of 2 will be used)\n");
+                case 2: case 3: case 4: case 8: bpp = value.value(); break;
+                default: fmt::print(stderr, "warning: bpp can only be 2, 3, 4 or 8 (default of 2 will be used)\n");
                 }
                 break;
             }
