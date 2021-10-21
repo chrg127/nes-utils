@@ -1,4 +1,4 @@
-_objs := chr.o chrconvert.o stb_image.o
+_objs := chr.o chrconvert.o stb_image.o cmdline.o
 outdir := debug
 build := debug
 CC := gcc

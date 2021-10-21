@@ -11,6 +11,8 @@
 #include <CImg.h>
 #include "stb_image.h"
 #include "chr.hpp"
+#undef None
+#include "cmdline.hpp"
 
 long filesize(FILE *f)
 {
@@ -20,16 +22,21 @@ long filesize(FILE *f)
     return res;
 }
 
-template <std::integral T = int>
-std::optional<T> strconv(const char *str)
+template <typename T = int>
+std::optional<T> _conv(const char *start, const char *end, unsigned base = 10)
 {
+    static_assert(std::is_integral_v<T>, "T must be an integral numeric type");
     T value = 0;
-    const char *start = str;
-    const char *end = str + strlen(str);
-    auto res = std::from_chars(start, end, value, 10);
+    auto res = std::from_chars(start, end, value, base);
     if (res.ec != std::errc() || res.ptr != end)
         return std::nullopt;
     return value;
+}
+
+template <typename T = int, typename TStr = std::string>
+std::optional<T> strconv(const TStr &str, unsigned base = 10)
+{
+    return _conv<T>(str.data(), str.data() + str.size(), base);
 }
 
 int image_to_chr(const char *input, const char *output, int bpp, chr::DataMode mode)
@@ -92,18 +99,6 @@ int chr_to_image(const char *input, const char *output, int bpp, chr::DataMode m
     return 0;
 }
 
-void usage()
-{
-    fmt::print(stderr, "usage: chrconvert [file...]\n"
-                       "valid flags:\n"
-                       "    -h: show this help text\n"
-                       "    -o FILENAME: output to FILENAME\n"
-                       "    -r: reverse: convert from image to chr\n"
-                       "    -b NUMBER: select bpp (bits per pixel)\n"
-                       "    -d (planar | interwined): select data mode\n"
-                       "    -m (nes | snes): select mode\n");
-}
-
 bool select_mode(std::string_view arg, int &bpp, chr::DataMode &mode)
 {
     if (arg == "nes") {
@@ -119,8 +114,24 @@ bool select_mode(std::string_view arg, int &bpp, chr::DataMode &mode)
     return false;
 }
 
+using cmdline::ParamType;
+
+static const cmdline::ArgumentList arglist = {
+    { 'h', "help",      "show this help text"                                         },
+    { 'o', "output",    "FILENAME: output to FILENAME",             ParamType::Single },
+    { 'r', "reverse",   "convert from image to chr"                                   },
+    { 'b', "bpp",       "NUMBER: specify bpp (bits per pixel)",     ParamType::Single },
+    { 'd', "data-mode", "(planar | interwined): specify data mode", ParamType::Single },
+    { 'm', "mode",      "(nes | snes): specify mode",               ParamType::Single },
+};
+
 int main(int argc, char *argv[])
 {
+    auto usage = []() {
+        fmt::print(stderr, "usage: chrconvert [file...]\n");
+        cmdline::print_args(arglist, stderr);
+    };
+
     if (argc < 2) {
         usage();
         return 1;
@@ -131,84 +142,45 @@ int main(int argc, char *argv[])
     int bpp = 2;
     chr::DataMode datamode = chr::DataMode::Planar;
 
-    while (++argv, --argc > 0) {
-        if (argv[0][0] == '-') {
-            switch (argv[0][1]) {
-            case 'h':
-                usage();
-                return 0;
-            case 'o':
-                ++argv;
-                --argc;
-                if (argc == 0)
-                    fmt::print(stderr, "warning: no argument provided for -o\n");
-                else
-                    output = argv[0];
-                break;
-            case 'r':
-                mode = Mode::TOCHR;
-                break;
-            case 'b': {
-                ++argv;
-                --argc;
-                if (argc == 0) {
-                    fmt::print(stderr, "warning: no argument provided for -b\n");
-                    continue;
-                }
-                auto value = strconv(argv[0]);
-                if (!value) {
-                    fmt::print(stderr, "warning: invalid value {} for -b (default of 2 will be used)\n", argv[0]);
-                    continue;
-                }
-                if (value.value() == 0 || value.value() > 8) {
-                    fmt::print(stderr, "warning: bpp can only be 1 to 8 (default of 2 will be used)\n");
-                    continue;
-                }
-                bpp = value.value();
-                break;
-            }
-            case 'd': {
-                ++argv;
-                --argc;
-                if (argc == 0) {
-                    fmt::print(stderr, "warning: no argument provided for -d\n");
-                    continue;
-                }
-                std::string_view arg = argv[0];
-                if (arg == "planar")
-                    ; // default
-                else if (arg == "interwined")
-                    datamode = chr::DataMode::Interwined;
-                else
-                    fmt::print(stderr, "warning: invalid argument {} for -d (default \"planar\" will be used)\n", argv[0]);
-                break;
-            }
-            case 'm': {
-                ++argv;
-                --argc;
-                if (argc == 0) {
-                    fmt::print(stderr, "warning: no argument provided for -m\n");
-                    continue;
-                }
-                if (!select_mode(argv[0], bpp, datamode))
-                    fmt::print(stderr, "warning: invalid mode (defaults will be used)\n");
-                break;
-            }
-            default:
-                fmt::print(stderr, "warning: -{}: unknown flag\n", argv[0][1]);
-            }
-        } else {
-            if (!input)
-                input = argv[0];
-            else
-                fmt::print(stderr, "warning: too many files specified\n");
-        }
+    auto result = cmdline::parse(argc, argv, arglist);
+    if (result.has['h']) {
+        usage();
+        return 0;
+    }
+    if (result.has['o'])
+        output = result.params['o'].data();
+    if (result.has['r'])
+        mode = Mode::TOCHR;
+    if (result.has['b']) {
+        auto num = strconv(result.params['b']);
+        if (!num)
+            fmt::print(stderr, "warning: invalid value {} for -b (default of 2 will be used)\n", argv[0]);
+        else if (num.value() == 0 || num.value() > 8)
+            fmt::print(stderr, "warning: bpp can only be 1 to 8 (default of 2 will be used)\n");
+        else
+            bpp = num.value();
+    }
+    if (result.has['d']) {
+        auto param = result.params['d'];
+        if (param == "planar")
+            ; // default
+        else if (param == "interwined")
+            datamode = chr::DataMode::Interwined;
+        else
+            fmt::print(stderr, "warning: invalid argument {} for -d (default \"planar\" will be used)\n", argv[0]);
+    }
+    if (result.has['m']) {
+        if (!select_mode(result.params['m'], bpp, datamode))
+            fmt::print(stderr, "warning: invalid mode (defaults will be used)\n");
     }
 
-    if (!input) {
+    if (result.items.size() == 0) {
         fmt::print(stderr, "error: no file specified\n");
+        usage();
         return 1;
-    }
+    } else if (result.items.size() > 1)
+        fmt::print(stderr, "error: too many files specified (only first will be used)\n");
+    input = result.items[0].data();
 
     return mode == Mode::TOIMG ? chr_to_image(input, output ? output : "output.png", bpp, datamode)
                                : image_to_chr(input, output ? output : "output.chr", bpp, datamode);
